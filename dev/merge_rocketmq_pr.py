@@ -70,7 +70,7 @@ def get_json(url):
     try:
         request = urllib2.Request(url)
         if GITHUB_OAUTH_KEY:
-            request.add_header('Authorization', 'token %s' % GITHUB_OAUTH_KEY)
+            request.add_header('Authorization', f'token {GITHUB_OAUTH_KEY}')
         return json.load(urllib2.urlopen(request))
     except urllib2.HTTPError as e:
         if "X-RateLimit-Remaining" in e.headers and e.headers["X-RateLimit-Remaining"] == '0':
@@ -78,7 +78,7 @@ def get_json(url):
                   "dev/merge_rocketmq_pr.py to configure an OAuth token for making authenticated " +
                   "GitHub requests.")
         else:
-            print("Unable to fetch URL, exiting: %s" % url)
+            print(f"Unable to fetch URL, exiting: {url}")
         sys.exit(-1)
 
 
@@ -103,23 +103,23 @@ def continue_maybe(prompt):
 
 
 def clean_up():
-    print("Restoring head pointer to %s" % original_head)
-    run_cmd("git checkout %s" % original_head)
+    print(f"Restoring head pointer to {original_head}")
+    run_cmd(f"git checkout {original_head}")
 
     branches = run_cmd("git branch").replace(" ", "").split("\n")
 
     for branch in filter(lambda x: x.startswith(BRANCH_PREFIX), branches):
-        print("Deleting local branch %s" % branch)
-        run_cmd("git branch -D %s" % branch)
+        print(f"Deleting local branch {branch}")
+        run_cmd(f"git branch -D {branch}")
 
 
 # merge the requested PR and return the merge hash
 def merge_pr(pr_num, target_ref, title, body, pr_repo_desc):
-    pr_branch_name = "%s_MERGE_PR_%s" % (BRANCH_PREFIX, pr_num)
-    target_branch_name = "%s_MERGE_PR_%s_%s" % (BRANCH_PREFIX, pr_num, target_ref.upper())
-    run_cmd("git fetch %s pull/%s/head:%s" % (PR_REMOTE_NAME, pr_num, pr_branch_name))
-    run_cmd("git fetch %s %s:%s" % (PUSH_REMOTE_NAME, target_ref, target_branch_name))
-    run_cmd("git checkout %s" % target_branch_name)
+    pr_branch_name = f"{BRANCH_PREFIX}_MERGE_PR_{pr_num}"
+    target_branch_name = f"{BRANCH_PREFIX}_MERGE_PR_{pr_num}_{target_ref.upper()}"
+    run_cmd(f"git fetch {PR_REMOTE_NAME} pull/{pr_num}/head:{pr_branch_name}")
+    run_cmd(f"git fetch {PUSH_REMOTE_NAME} {target_ref}:{target_branch_name}")
+    run_cmd(f"git checkout {target_branch_name}")
 
     had_conflicts = False
     try:
@@ -131,8 +131,10 @@ def merge_pr(pr_num, target_ref, title, body, pr_repo_desc):
         continue_maybe(msg)
         had_conflicts = True
 
-    commit_authors = run_cmd(['git', 'log', 'HEAD..%s' % pr_branch_name,
-                             '--pretty=format:%an <%ae>']).split("\n")
+    commit_authors = run_cmd(
+        ['git', 'log', f'HEAD..{pr_branch_name}', '--pretty=format:%an <%ae>']
+    ).split("\n")
+
     distinct_authors = sorted(set(commit_authors),
                               key=lambda x: commit_authors.count(x), reverse=True)
     primary_author = raw_input(
@@ -141,17 +143,24 @@ def merge_pr(pr_num, target_ref, title, body, pr_repo_desc):
     if primary_author == "":
         primary_author = distinct_authors[0]
 
-    commits = run_cmd(['git', 'log', 'HEAD..%s' % pr_branch_name,
-                      '--pretty=format:%h [%an] %s']).split("\n\n")
+    commits = run_cmd(
+        [
+            'git',
+            'log',
+            f'HEAD..{pr_branch_name}',
+            '--pretty=format:%h [%an] %s',
+        ]
+    ).split("\n\n")
+
 
     merge_message_flags = []
 
-    modified_title = raw_input("Modify commit log [%s]: " % title)
+    modified_title = raw_input(f"Modify commit log [{title}]: ")
     if modified_title == "":
         modified_title = title
     merge_message_flags += ["-m", modified_title]
 
-    authors = "\n".join(["Author: %s" % a for a in distinct_authors])
+    authors = "\n".join([f"Author: {a}" for a in distinct_authors])
 
     merge_message_flags += ["-m", authors]
 
@@ -163,75 +172,77 @@ def merge_pr(pr_num, target_ref, title, body, pr_repo_desc):
         merge_message_flags += ["-m", message]
 
     # The string "Closes #%s" string is required for GitHub to correctly close the PR
-    merge_message_flags += ["-m", "Closes #%s from %s." % (pr_num, pr_repo_desc)]
+    merge_message_flags += ["-m", f"Closes #{pr_num} from {pr_repo_desc}."]
 
     run_cmd(['git', 'commit', '--author="%s"' % primary_author] + merge_message_flags)
 
-    continue_maybe("Merge complete (local ref %s). Push to %s?" % (
-        target_branch_name, PUSH_REMOTE_NAME))
+    continue_maybe(
+        f"Merge complete (local ref {target_branch_name}). Push to {PUSH_REMOTE_NAME}?"
+    )
+
 
     try:
-        run_cmd('git push %s %s:%s' % (PUSH_REMOTE_NAME, target_branch_name, target_ref))
+        run_cmd(f'git push {PUSH_REMOTE_NAME} {target_branch_name}:{target_ref}')
     except Exception as e:
         clean_up()
-        fail("Exception while pushing: %s" % e)
+        fail(f"Exception while pushing: {e}")
 
-    merge_hash = run_cmd("git rev-parse %s" % target_branch_name)[:8]
+    merge_hash = run_cmd(f"git rev-parse {target_branch_name}")[:8]
     clean_up()
-    print("Pull request #%s merged!" % pr_num)
-    print("Merge hash: %s" % merge_hash)
+    print(f"Pull request #{pr_num} merged!")
+    print(f"Merge hash: {merge_hash}")
     return merge_hash
 
 
 def cherry_pick(pr_num, merge_hash, default_branch):
-    pick_ref = raw_input("Enter a branch name [%s]: " % default_branch)
+    pick_ref = raw_input(f"Enter a branch name [{default_branch}]: ")
     if pick_ref == "":
         pick_ref = default_branch
 
-    pick_branch_name = "%s_PICK_PR_%s_%s" % (BRANCH_PREFIX, pr_num, pick_ref.upper())
+    pick_branch_name = f"{BRANCH_PREFIX}_PICK_PR_{pr_num}_{pick_ref.upper()}"
 
-    run_cmd("git fetch %s %s:%s" % (PUSH_REMOTE_NAME, pick_ref, pick_branch_name))
-    run_cmd("git checkout %s" % pick_branch_name)
+    run_cmd(f"git fetch {PUSH_REMOTE_NAME} {pick_ref}:{pick_branch_name}")
+    run_cmd(f"git checkout {pick_branch_name}")
 
     try:
-        run_cmd("git cherry-pick -sx %s" % merge_hash)
+        run_cmd(f"git cherry-pick -sx {merge_hash}")
     except Exception as e:
         msg = "Error cherry-picking: %s\nWould you like to manually fix-up this merge?" % e
         continue_maybe(msg)
         msg = "Okay, please fix any conflicts and finish the cherry-pick. Finished?"
         continue_maybe(msg)
 
-    continue_maybe("Pick complete (local ref %s). Push to %s?" % (
-        pick_branch_name, PUSH_REMOTE_NAME))
+    continue_maybe(
+        f"Pick complete (local ref {pick_branch_name}). Push to {PUSH_REMOTE_NAME}?"
+    )
+
 
     try:
-        run_cmd('git push %s %s:%s' % (PUSH_REMOTE_NAME, pick_branch_name, pick_ref))
+        run_cmd(f'git push {PUSH_REMOTE_NAME} {pick_branch_name}:{pick_ref}')
     except Exception as e:
         clean_up()
-        fail("Exception while pushing: %s" % e)
+        fail(f"Exception while pushing: {e}")
 
-    pick_hash = run_cmd("git rev-parse %s" % pick_branch_name)[:8]
+    pick_hash = run_cmd(f"git rev-parse {pick_branch_name}")[:8]
     clean_up()
 
-    print("Pull request #%s picked into %s!" % (pr_num, pick_ref))
-    print("Pick hash: %s" % pick_hash)
+    print(f"Pull request #{pr_num} picked into {pick_ref}!")
+    print(f"Pick hash: {pick_hash}")
     return pick_ref
 
 
 def fix_version_from_branch(branch, versions):
-    # Note: Assumes this is a sorted (newest->oldest) list of un-released versions
     if branch == "master":
         return versions[0]
-    else:
-        branch_ver = branch.replace("branch-", "")
-        return filter(lambda x: x.name.startswith(branch_ver), versions)[-1]
+    branch_ver = branch.replace("branch-", "")
+    return filter(lambda x: x.name.startswith(branch_ver), versions)[-1]
 
 
 def resolve_jira_issue(merge_branches, comment, default_jira_id=""):
     asf_jira = jira.client.JIRA({'server': JIRA_API_BASE},
                                 basic_auth=(JIRA_USERNAME, JIRA_PASSWORD))
 
-    jira_id = raw_input("Enter a JIRA id [%s]: " % default_jira_id)
+    jira_id = raw_input(f"Enter a JIRA id [{default_jira_id}]: ")
     if jira_id == "":
         jira_id = default_jira_id
 
@@ -248,9 +259,9 @@ def resolve_jira_issue(merge_branches, comment, default_jira_id=""):
     else:
         cur_assignee = cur_assignee.displayName
 
-    if cur_status == "Resolved" or cur_status == "Closed":
+    if cur_status in ["Resolved", "Closed"]:
         fail("JIRA issue %s already has status '%s'" % (jira_id, cur_status))
-    print("=== JIRA %s ===" % jira_id)
+    print(f"=== JIRA {jira_id} ===")
     print("summary\t\t%s\nassignee\t%s\nstatus\t\t%s\nurl\t\t%s/%s\n" %
           (cur_summary, cur_assignee, cur_status, JIRA_BASE, jira_id))
 
@@ -268,12 +279,15 @@ def resolve_jira_issue(merge_branches, comment, default_jira_id=""):
         # both 1.1.0 and 1.0.0 as fix versions.
         (major, minor, patch) = v.split(".")
         if patch == "0":
-            previous = "%s.%s.%s" % (major, int(minor) - 1, 0)
+            previous = f"{major}.{int(minor) - 1}.0"
             if previous in default_fix_versions:
                 default_fix_versions = filter(lambda x: x != v, default_fix_versions)
     default_fix_versions = ",".join(default_fix_versions)
 
-    fix_versions = raw_input("Enter comma-separated fix version(s) [%s]: " % default_fix_versions)
+    fix_versions = raw_input(
+        f"Enter comma-separated fix version(s) [{default_fix_versions}]: "
+    )
+
     if fix_versions == "":
         fix_versions = default_fix_versions
     fix_versions = fix_versions.replace(" ", "").split(",")
@@ -289,7 +303,7 @@ def resolve_jira_issue(merge_branches, comment, default_jira_id=""):
         jira_id, resolve["id"], fixVersions=jira_fix_versions,
         comment=comment, resolution={'id': resolution.raw['id']})
 
-    print("Successfully resolved %s with fixVersions=%s!" % (jira_id, fix_versions))
+    print(f"Successfully resolved {jira_id} with fixVersions={fix_versions}!")
 
 
 def resolve_jira_issues(title, merge_branches, comment):
@@ -345,11 +359,7 @@ def standardize_jira_ref(text):
 
 def get_current_ref():
     ref = run_cmd("git rev-parse --abbrev-ref HEAD").strip()
-    if ref == 'HEAD':
-        # The current ref is a detached HEAD, so grab its SHA.
-        return run_cmd("git rev-parse HEAD").strip()
-    else:
-        return ref
+    return run_cmd("git rev-parse HEAD").strip() if ref == 'HEAD' else ref
 
 
 def main():
@@ -361,8 +371,8 @@ def main():
     latest_branch = DEVELOP_BRANCH
 
     pr_num = raw_input("Which pull request would you like to merge? (e.g. 34): ")
-    pr = get_json("%s/pulls/%s" % (GITHUB_API_BASE, pr_num))
-    pr_events = get_json("%s/issues/%s/events" % (GITHUB_API_BASE, pr_num))
+    pr = get_json(f"{GITHUB_API_BASE}/pulls/{pr_num}")
+    pr_events = get_json(f"{GITHUB_API_BASE}/issues/{pr_num}/events")
 
     url = pr["url"]
 
@@ -370,8 +380,8 @@ def main():
     modified_title = standardize_jira_ref(pr["title"])
     if modified_title != pr["title"]:
         print("I've re-written the title as follows to match the standard format:")
-        print("Original: %s" % pr["title"])
-        print("Modified: %s" % modified_title)
+        print(f'Original: {pr["title"]}')
+        print(f"Modified: {modified_title}")
         result = raw_input("Would you like to use the modified title? (y/n): ")
         if result.lower() == "y":
             title = modified_title
@@ -387,18 +397,23 @@ def main():
     target_ref = pr["base"]["ref"]
     user_login = pr["user"]["login"]
     base_ref = pr["head"]["ref"]
-    pr_repo_desc = "%s/%s" % (user_login, base_ref)
+    pr_repo_desc = f"{user_login}/{base_ref}"
 
-    # Merged pull requests don't appear as merged in the GitHub API;
-    # Instead, they're closed by asfgit.
-    merge_commits = \
-        [e for e in pr_events if e["actor"]["login"] == "asfgit" and e["event"] == "closed"]
-
-    if merge_commits:
+    if merge_commits := [
+        e
+        for e in pr_events
+        if e["actor"]["login"] == "asfgit" and e["event"] == "closed"
+    ]:
         merge_hash = merge_commits[0]["commit_id"]
-        message = get_json("%s/commits/%s" % (GITHUB_API_BASE, merge_hash))["commit"]["message"]
+        message = get_json(f"{GITHUB_API_BASE}/commits/{merge_hash}")[
+            "commit"
+        ]["message"]
 
-        print("Pull request %s has already been merged, assuming you want to backport" % pr_num)
+
+        print(
+            f"Pull request {pr_num} has already been merged, assuming you want to backport"
+        )
+
         commit_is_downloaded = run_cmd(['git', 'rev-parse', '--quiet', '--verify',
                                         "%s^{commit}" % merge_hash]).strip() != ""
         if not commit_is_downloaded:
@@ -416,13 +431,13 @@ def main():
     print("\n=== Pull Request #%s ===" % pr_num)
     print("title\t%s\nsource\t%s\ntarget\t%s\nurl\t%s" %
           (title, pr_repo_desc, target_ref, url))
-    continue_maybe("Proceed with merging pull request #%s?" % pr_num)
+    continue_maybe(f"Proceed with merging pull request #{pr_num}?")
 
     merged_refs = [target_ref]
 
     merge_hash = merge_pr(pr_num, target_ref, title, body, pr_repo_desc)
 
-    pick_prompt = "Would you like to pick %s into another branch?" % merge_hash
+    pick_prompt = f"Would you like to pick {merge_hash} into another branch?"
     while raw_input("\n%s (y/n): " % pick_prompt).lower() == "y":
         merged_refs = merged_refs + [cherry_pick(pr_num, merge_hash, latest_branch)]
 
